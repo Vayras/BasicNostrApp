@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <script src="https://bitcoincore.tech/apps/bitcoinjs-ui/lib/bitcoinjs-lib.js"></script>
+    <script src="https://bundle.run/noble-secp256k1@1.2.14"></script>
+</head>    
+<body>
+    <div>
+        <h5 id= "pKey"></h5>
+    </div>
+    <script>
+
+        //creating a pubkey
+		var { getSharedSecret, schnorr, utils } = nobleSecp256k1
+		var crypto  = window.crypto 
+		var getRand = size => crypto.getRandomValues(new Uint8Array(size))
+		var sha256  = bitcoinjs.crypto.sha256
+		var keypair = bitcoinjs.ECPair.makeRandom()
+		var privKey = keypair.privateKey.toString( "hex" )
+		var pubKey  = keypair.publicKey.toString( "hex" )
+		pubKey      = pubKey.substring( 2 )
+		console.log( pubKey , "Pub key" );
+
+        //creating a relay and connecting to it
+        var relay = "wss://nostr-01.yakihonne.com";
+        var socket = new WebSocket( relay );
+
+        //creating a event listener to listen to messages from relay
+        socket.addEventListener('message', async function( message ) {
+        var [ type, subId, event ] = JSON.parse( message.data );
+        var { kind, content } = event || {}
+        if (!event || event === true) return
+        console.log('message:', event)
+        if (kind === 4) {
+            content = await decrypt(privKey, event.pubkey, content)
+        }
+        console.log('content:', content)
+         })
+
+        //connectig to my relay and creating a subscription to my self
+        var subId   = bitcoinjs.ECPair.makeRandom().privateKey.toString( "hex" ).substring(0,16)
+        var filter  = { "authors": [ pubKey ] }
+
+        socket.addEventListener('open', async function( e ) {
+        console.log( "connected to " + relay )
+            
+        var subscription = [ "REQ", subId, filter ]
+        console.log('Subscription:', subscription)
+
+        socket.send(JSON.stringify( subscription ));
+
+        var event = {
+		"content"    : "this is my first nostr app, nostr is awesome!",
+		"created_at" : Math.floor( Date.now() / 1000 ),
+		"kind"       : 1,
+		"tags"       : [],
+		"pubkey"     : pubKey,
+	    }
+        var signedEvent = await getSignedEvent(event, privKey)
+        console.log('signedEvent:', signedEvent)
+        socket.send(JSON.stringify([ "EVENT", signedEvent ]))
+
+        }) 
+        
+        //creating a public note for signing
+        async function getSignedEvent(event, privateKey) {
+        var eventData = JSON.stringify([
+            0,					// id
+            event['pubkey'],		// The sender's public key
+            event['created_at'],	// Unix timestamp
+            event['kind'],		// Message “kind” or type
+            event['tags'],		// Tags identify replies/recipients
+            event['content']		// Your note contents
+        ])
+        event.id  = sha256( eventData ).toString( 'hex' )
+        event.sig = await schnorr.sign( event.id, privateKey ) 
+        return event
+        }
+
+</script>
+</body>
+</html>
